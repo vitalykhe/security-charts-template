@@ -228,6 +228,10 @@ kubectl -n crowdsec logs daemonset/crowdsec-firewall-bouncer --tail 20
 sudo iptables -L crowdsec-blacklists -n      # on the node
 ```
 
+---
+
+📖 [Подключаемый Helm шаблон для GitOps репозиториев для защиты от сканнеров](https://telegra.ph/Kak-ya-stolknulsya-s-atakami-i-napisal-podklyuchaemyj-Helm-shablon-dlya-GitOps-repozitoriev-06-06) — статья о создании этого Helm-чарта.
+
 ### Development
 
 ```bash
