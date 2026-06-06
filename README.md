@@ -261,40 +261,6 @@ helm lint charts/crowdsec-firewall-bouncer/
 
 Блокирует вредоносные IP (`.env` сканеры, брутфорс-боты и т.д.) на **уровне ноды** через iptables, до того как они достигнут nginx.
 
-```text
-                                    ┌──────────────────┐
-                                    │   Internet       │
-                                    │  (атакующий IP)  │
-                                    └────────┬─────────┘
-                                             │
-                                             ▼
-                              ┌──────────────────────────┐
-                              │  ingress-nginx            │
-                              │  (DaemonSet, hostNetwork) │
-                              └────────────┬─────────────┘
-                                           │
-                                   ┌───────▼────────┐
-                                   │  backend Pod   │
-                                   │  (HTTP 200/404)│
-                                   └────────────────┘
-                                             ▲
-                                             │ атакующий обходит
-                                             │ nginx → идёт на IP ноды
-                                             │
-        ┌─────────────────────┐    ┌─────────┴──────────┐    ┌──────────────────┐
-        │  CrowdSec Agent     │    │  CrowdSec LAPI     │    │ Firewall Bouncer │
-        │  (DaemonSet)        │───▶│  (Service)         │───▶│ (DaemonSet,      │
-        │  читает логи nginx  │    │  алерты→решения    │    │  privileged)     │
-        └─────────────────────┘    └────────────────────┘    └────────┬─────────┘
-                                                                      │
-                                                                      ▼
-                                                              ┌──────────────────┐
-                                                              │  iptables DROP   │
-                                                              │  INPUT chain     │
-                                                              │  (уровень ядра)  │
-                                                              └──────────────────┘
-```
-
 Требует: **CrowdSec LAPI** + **ingress-nginx с `hostNetwork`** + **Kubernetes Secret** с API-ключом bouncer'а.
 
 ---
