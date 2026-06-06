@@ -21,3 +21,14 @@ keywords:
 maintainers:
   - name: Vitaly Khe
     email: vitalykhe@users.noreply.github.com
+keywords:
+  - crowdsec
+  - firewall
+  - bouncer
+  - security
+  - kubernetes
+  - k8s
+  - iptables
+  - nftables
+  - intrusion-prevention
+  - node-level

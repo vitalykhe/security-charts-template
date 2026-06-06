@@ -1,6 +1,16 @@
-# Security Charts
+# security-charts — CrowdSec Firewall Bouncer for Kubernetes
 
-Reusable Helm charts for cluster security infrastructure.
+![Helm](https://img.shields.io/badge/Helm-3+-blue)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-1.24+-blue)
+![License](https://img.shields.io/badge/License-MIT-green)
+![OCI](https://img.shields.io/badge/OCI-GHCR-orange)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/crowdsec-firewall-bouncer-for-kubernetes)](https://artifacthub.io/packages/search?repo=crowdsec-firewall-bouncer-for-kubernetes)
+
+Reusable Helm charts for **Kubernetes cluster security infrastructure**. Deploy **CrowdSec firewall bouncer** as a DaemonSet to block malicious IPs (brute-force bots, `.env` scanners) at the **node level** via iptables/nftables, before traffic reaches **ingress-nginx**.
+
+## What problem it solves
+
+Attackers scanning the internet for `.env` files, API endpoints, or known vulnerabilities hit your cluster's node IPs directly, bypassing ingress-nginx. A standard Kubernetes NetworkPolicy cannot block traffic at the node level — it only controls pod-to-pod traffic within the cluster. This chart deploys a privileged DaemonSet that installs **CrowdSec firewall bouncer** on every node and adds attacker IPs to the kernel-level iptables/nftables `INPUT` chain, dropping malicious traffic **before** it reaches nginx or your applications.
 
 ## Charts
 
@@ -15,37 +25,42 @@ Reusable Helm charts for cluster security infrastructure.
 Blocks malicious IPs (`.env` scanners, brute‑force bots, etc.) at the **node level** using iptables, before they reach nginx.
 
 ```text
-                                    ┌──────────────────┐
-                                    │   Internet       │
-                                    │  (attacker IP)   │
-                                    └────────┬─────────┘
-                                             │
-                                             ▼
-                              ┌──────────────────────────┐
-                              │  ingress-nginx            │
-                              │  (DaemonSet, hostNetwork) │
-                              └────────────┬─────────────┘
-                                           │
-                                   ┌───────▼────────┐
-                                   │  backend Pod   │
-                                   │  (HTTP 200/404)│
-                                   └────────────────┘
-                                             ▲
-                                             │ attacker bypasses
-                                             │ nginx → hits node IP
-                                             │
-        ┌─────────────────────┐    ┌─────────┴──────────┐    ┌──────────────────┐
-        │  CrowdSec Agent     │    │  CrowdSec LAPI     │    │ Firewall Bouncer │
-        │  (DaemonSet)        │───▶│  (Service)         │───▶│ (DaemonSet,      │
-        │  reads nginx logs   │    │  alerts→decisions  │    │  privileged)     │
-        └─────────────────────┘    └────────────────────┘    └────────┬─────────┘
-                                                                      │
-                                                                      ▼
-                                                              ┌──────────────────┐
-                                                              │  iptables DROP   │
-                                                              │  INPUT chain     │
-                                                              │  (kernel level)  │
-                                                              └──────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│     PHASE 1 — Initial attack (before block is applied)                   │
+│                                                                          │
+│  ┌──────────┐  1 HTTP   ┌──────────────────┐  2 request  ┌──────────────┐│
+│  │ Attacker │─────────▶ │  ingress-nginx   │────────────▶│  Backend Pod ││
+│  │   IP     │           │  (hostNetwork)   │             │  (hit)       ││
+│  └──────────┘           └────────┬─────────┘             └──────────────┘│
+│                                  │3 reads access logs                    │
+│                                  ▼                                       │
+│                         ┌──────────────────┐  ┌──────────────────┐       │
+│                         │  CrowdSec Agent  │─▶│  CrowdSec LAPI   │       │
+│                         │  (detects attack)│  │  (alert→decision)│       │
+│                         └──────────────────┘  └────────┬─────────┘       │
+│                                                        │4 decision       │
+│                                                        ▼                 │
+│                                                ┌──────────────────┐      │
+│                                                │ Firewall Bouncer │      │
+│                                                │ 5 adds iptables  │      │
+│                                                │    INPUT DROP    │      │
+│                                                │    (attacker IP) │      │
+│                                                └──────────────────┘      │
+│                                                                          │
+│   PHASE 2 — IP blocked (subsequent packets)                              │ 
+│                                                                          │
+│  ┌──────────┐  6 packet  ┌──────────────────┐  BLOCKED                   │
+│  │ Attacker │───────────▶│  iptables INPUT  │  (kernel drops packet      │
+│  │   IP     │            │  DROP rule       │   before nginx sees it)    │
+│  └──────────┘            └──────────────────┘                            │
+│                                                                          │
+│  ┌──────────┐  7 packet  ┌──────────────────┐  8 request  ┌────────────┐ │
+│  │ Legit    │───────────▶│  iptables INPUT  │────────────▶│  Backend   │ │
+│  │ Client   │            │  (no rule, pass) │             │  Pod       │ │
+│  └──────────┘            └──────────────────┘             └────────────┘ │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 Requires: **CrowdSec LAPI** + **ingress-nginx with `hostNetwork`** + **Kubernetes Secret** with bouncer API key.
