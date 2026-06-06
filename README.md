@@ -89,7 +89,7 @@ spec:
           name: crowdsec-firewall-bouncer-key
           key: api-key
         config:
-          apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
+          apiUrl: "http://crowdsec-service.crowdsec:8080"
   destination:
     server: https://kubernetes.default.svc
     namespace: crowdsec
@@ -174,7 +174,7 @@ Run it: **GitHub → Actions → crowdsec-bootstrap → Run workflow**
 **Option B — Manual (one-time):**
 
 ```bash
-kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- \
+kubectl -n crowdsec exec deployment/crowdsec-lapi -- \
   cscli bouncers add firewall-bouncer
 # copy the returned key
 
@@ -193,7 +193,7 @@ helm upgrade --install crowdsec-firewall-bouncer \
   --namespace crowdsec --create-namespace \
   --set existingSecret.name=crowdsec-firewall-bouncer-key \
   --set existingSecret.key=api-key \
-  --set config.apiUrl=http://crowdsec-crowdsec-lapi.crowdsec:8080
+  --set config.apiUrl=http://crowdsec-service.crowdsec:8080
 ```
 
 Or with a local values file:
@@ -209,7 +209,7 @@ helm upgrade --install crowdsec-firewall-bouncer \
 
 | Parameter | Default | Description |
 |---|---|---|
-| `config.apiUrl` | `http://crowdsec-crowdsec-lapi.crowdsec:8080` | LAPI URL |
+| `config.apiUrl` | `http://crowdsec-service.crowdsec:8080` | LAPI URL |
 | `config.backend` | `iptables` | iptables or nftables |
 | `config.updateFrequency` | `10s` | How often to pull decisions |
 | `config.denyAction` | `DROP` | DROP or REJECT |
@@ -223,7 +223,7 @@ helm upgrade --install crowdsec-firewall-bouncer \
 
 ```bash
 kubectl -n crowdsec get pods
-kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- cscli bouncers list
+kubectl -n crowdsec exec deployment/crowdsec-lapi -- cscli bouncers list
 kubectl -n crowdsec logs daemonset/crowdsec-firewall-bouncer --tail 20
 sudo iptables -L crowdsec-blacklists -n      # on the node
 ```
@@ -317,7 +317,7 @@ spec:
           name: crowdsec-firewall-bouncer-key
           key: api-key
         config:
-          apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
+          apiUrl: "http://crowdsec-service.crowdsec:8080"
   destination:
     server: https://kubernetes.default.svc
     namespace: crowdsec
@@ -402,7 +402,7 @@ jobs:
 **Вариант B — Вручную (one-time):**
 
 ```bash
-kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- \
+kubectl -n crowdsec exec deployment/crowdsec-lapi -- \
   cscli bouncers add firewall-bouncer
 # скопировать ключ
 
@@ -421,7 +421,7 @@ helm upgrade --install crowdsec-firewall-bouncer \
   --namespace crowdsec --create-namespace \
   --set existingSecret.name=crowdsec-firewall-bouncer-key \
   --set existingSecret.key=api-key \
-  --set config.apiUrl=http://crowdsec-crowdsec-lapi.crowdsec:8080
+  --set config.apiUrl=http://crowdsec-service.crowdsec:8080
 ```
 
 Или с локальным values-файлом:
@@ -437,7 +437,7 @@ helm upgrade --install crowdsec-firewall-bouncer \
 
 ```bash
 kubectl -n crowdsec get pods
-kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- cscli bouncers list
+kubectl -n crowdsec exec deployment/crowdsec-lapi -- cscli bouncers list
 kubectl -n crowdsec logs daemonset/crowdsec-firewall-bouncer --tail 20
 sudo iptables -L crowdsec-blacklists -n      # на ноде
 ```
