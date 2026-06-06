@@ -14,7 +14,9 @@ image:
 # into a Kubernetes Secret referenced by existingSecret below.
 config:
   # LAPI URL (internal ClusterIP service)
-  apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
+  # ⚠️  Match the actual name of your LAPI Service.
+  #     The official CrowdSec Helm chart creates "crowdsec-service".
+  apiUrl: "http://crowdsec-service.crowdsec:8080"
 
   # Backend: iptables or nftables
   backend: iptables
