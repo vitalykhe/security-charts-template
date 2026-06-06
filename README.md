@@ -6,70 +6,123 @@ Reusable Helm charts for cluster security infrastructure.
 
 | Chart | Description |
 |---|---|
-| `crowdsec-firewall-bouncer` | CrowdSec bouncer that bans IPs via iptables/nftables at the node level |
+| `crowdsec-firewall-bouncer` | CrowdSec bouncer — bans IPs via iptables/nftables at the node level |
 
 ---
 
 # crowdsec-firewall-bouncer
 
-CrowdSec firewall bouncer blocks malicious IPs (`.env` scanners, `phpinfo` probes,
-brute‑force bots, etc.) at the **node level** using iptables.
-
-## Architecture
+Blocks malicious IPs (`.env` scanners, brute‑force bots, etc.) at the **node level** using iptables, before they reach nginx.
 
 ```text
-Internet → ingress-nginx (DaemonSet, hostNetwork) → backend Pod
-                │
-                ▼ (attacker hits node directly)
-         CrowdSec Agent (DaemonSet)
-                │ reads ingress-nginx logs
-                ▼
-         CrowdSec LAPI (Service)
-                │ alerts → decisions (ban)
-                ▼
-         CrowdSec Firewall Bouncer (DaemonSet, privileged)
-                │ iptables DROP for banned source IPs
-                ▼
-         Attacker IP blocked at kernel level —
-         no TCP handshake reaches nginx
+                                    ┌──────────────────┐
+                                    │   Internet       │
+                                    │  (attacker IP)   │
+                                    └────────┬─────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │  ingress-nginx            │
+                              │  (DaemonSet, hostNetwork) │
+                              └────────────┬─────────────┘
+                                           │
+                                   ┌───────▼────────┐
+                                   │  backend Pod   │
+                                   │  (HTTP 200/404)│
+                                   └────────────────┘
+                                             ▲
+                                             │ attacker bypasses
+                                             │ nginx → hits node IP
+                                             │
+        ┌─────────────────────┐    ┌─────────┴──────────┐    ┌──────────────────┐
+        │  CrowdSec Agent     │    │  CrowdSec LAPI     │    │ Firewall Bouncer │
+        │  (DaemonSet)        │───▶│  (Service)         │───▶│ (DaemonSet,      │
+        │  reads nginx logs   │    │  alerts→decisions  │    │  privileged)     │
+        └─────────────────────┘    └────────────────────┘    └────────┬─────────┘
+                                                                      │
+                                                                      ▼
+                                                              ┌──────────────────┐
+                                                              │  iptables DROP   │
+                                                              │  INPUT chain     │
+                                                              │  (kernel level)  │
+                                                              └──────────────────┘
 ```
 
-1. **CrowdSec Agent** tails ingress-nginx container logs on each node.
-2. Agent parses logs with the `crowdsecurity/nginx` collection and sends alerts to **LAPI**.
-3. LAPI aggregates alerts and pushes **ban decisions** to connected bouncers.
-4. **Firewall Bouncer** (DaemonSet) runs with `privileged: true` and adds `iptables DROP`
-   rules for banned IPs. Because `ingress-nginx` runs with `hostNetwork`, blocked IPs
-   never reach nginx — they are dropped in the `INPUT` chain.
+Requires: **CrowdSec LAPI** + **ingress-nginx with `hostNetwork`** + **Kubernetes Secret** with bouncer API key.
 
-## Prerequisites
+---
 
-| Requirement | Details |
-|---|---|
-| CrowdSec LAPI | Deployed in the same cluster (e.g. via `crowdsecurity/crowdsec` Helm chart) |
-| Kubernetes Secret | `crowdsec-firewall-bouncer-key` with key `api-key` — holds the bouncer API key |
-| Cluster node | `hostNetwork` for ingress-nginx (so iptables `INPUT` chain blocks before nginx) |
+## Connecting to your GitOps
 
-### GitHub Actions Secrets
+### 1. Add source repo to ArgoCD Project
 
-If you use the bootstrap workflow, configure these secrets in your GitHub repo:
+Add `security-charts` to `sourceRepos` in your Project (e.g. `cluster-infra`):
+
+```yaml
+spec:
+  sourceRepos:
+    - https://github.com/vitalykhe/security-charts.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: crowdsec
+```
+
+### 2. Create ArgoCD Application
+
+**From Git repository** (recommended):
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crowdsec-firewall-bouncer
+  namespace: argocd
+spec:
+  project: cluster-infra
+  source:
+    repoURL: https://github.com/vitalykhe/security-charts.git
+    targetRevision: main
+    path: charts/crowdsec-firewall-bouncer
+    helm:
+      values: |
+        existingSecret:
+          name: crowdsec-firewall-bouncer-key
+          key: api-key
+        config:
+          apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crowdsec
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+**From OCI registry** (GHCR):
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer
+  targetRevision: 0.1.0
+```
+
+### 3. Add `KUBE_CONFIG_B64` to GitHub Secrets
+
+In **your GitOps repository**, create a GitHub Actions Secret:
+
+```bash
+base64 < ~/.kube/config | tr -d '\n'
+```
 
 | Secret | Description |
 |---|---|
 | `KUBE_CONFIG_B64` | base64-encoded kubeconfig with access to the cluster and `crowdsec` namespace |
 
-```bash
-base64 < ~/.kube/config | tr -d '\n'
-# Add the output as a repository Secret named KUBE_CONFIG_B64
-```
+### 4. Register bouncer & create API key Secret
 
-## Bootstrap — Bouncer API Key
-
-The bouncer needs an API key registered with the CrowdSec LAPI.
-**Never store the key in Git.** Use one of the methods below.
-
-### Option 1: GitHub Actions workflow (recommended)
-
-Create a workflow in your consumer project (example: `.github/workflows/crowdsec-bootstrap.yml`):
+**Option A — GitHub Actions (recommended).**  
+Place this workflow in **your GitOps repo** (`.github/workflows/crowdsec-bootstrap.yml`):
 
 ```yaml
 name: crowdsec-bootstrap
@@ -100,7 +153,6 @@ jobs:
         run: |
           LAPI_POD=$(kubectl -n crowdsec get pod \
             -l app.kubernetes.io/name=crowdsec-lapi -o jsonpath='{.items[0].metadata.name}')
-          # Remove old bouncer if exists, then create fresh
           kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers delete firewall-bouncer 2>/dev/null || true
           API_KEY=$(kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add firewall-bouncer -o raw)
           echo "::add-mask::$API_KEY"
@@ -119,61 +171,41 @@ jobs:
 
 Run it: **GitHub → Actions → crowdsec-bootstrap → Run workflow**
 
-### Option 2: Manual (one-time)
+**Option B — Manual (one-time):**
 
 ```bash
-# 1. Deploy CrowdSec LAPI first, then register the bouncer:
 kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- \
   cscli bouncers add firewall-bouncer
-#    ^ copy the returned API key
+# copy the returned key
 
-# 2. Create the Kubernetes Secret:
 kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
   --from-literal=api-key='<KEY>'
 
-# 3. Restart the bouncer to pick up the key:
 kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer
 ```
 
-## Usage in ArgoCD
-
-### From Git repository
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-spec:
-  source:
-    repoURL: https://github.com/vitalykhe/security-charts.git
-    path: charts/crowdsec-firewall-bouncer
-    targetRevision: main
-    helm:
-      values: |
-        config:
-          apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
-          backend: iptables
-          updateFrequency: 10s
-          denyAction: DROP
-          denyLog: true
-        existingSecret:
-          name: crowdsec-firewall-bouncer-key
-          key: api-key
-        resources:
-          requests:
-            cpu: 10m
-            memory: 32Mi
-```
-
-### From OCI registry (GHCR)
-
-Published on every push to `main`:
+### Plain Helm (without ArgoCD)
 
 ```bash
-helm pull oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer \
-  --version 0.1.0
+helm repo add security-charts oci://ghcr.io/vitalykhe/security-charts
+helm upgrade --install crowdsec-firewall-bouncer \
+  security-charts/crowdsec-firewall-bouncer \
+  --namespace crowdsec --create-namespace \
+  --set existingSecret.name=crowdsec-firewall-bouncer-key \
+  --set existingSecret.key=api-key \
+  --set config.apiUrl=http://crowdsec-crowdsec-lapi.crowdsec:8080
 ```
 
-## Configuration
+Or with a local values file:
+
+```bash
+helm upgrade --install crowdsec-firewall-bouncer \
+  oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer \
+  --namespace crowdsec --create-namespace \
+  -f my-values.yaml
+```
+
+### Configuration
 
 | Parameter | Default | Description |
 |---|---|---|
@@ -187,39 +219,230 @@ helm pull oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer \
 | `bouncerKey` | `change-me` | Inline key (dev only, not for production) |
 | `resources` | see values.yaml | CPU/memory requests and limits |
 
-## Verifying
+### Verifying
 
 ```bash
-# Pods
 kubectl -n crowdsec get pods
-
-# LAPI health
-kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- cscli metrics
-
-# Active bans (scanner IPs appear here)
-kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- cscli decision list
-
-# Bouncer registration
 kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- cscli bouncers list
-
-# Firewall bouncer logs
 kubectl -n crowdsec logs daemonset/crowdsec-firewall-bouncer --tail 20
-
-# iptables rules (on the node, not inside a pod):
-sudo iptables -L crowdsec-blacklists -n
+sudo iptables -L crowdsec-blacklists -n      # on the node
 ```
 
-## Testing
+### Development
 
 ```bash
-# Before ban — request reaches backend (200/404)
-curl -s -o /dev/null -w "%{http_code}" https://your.domain/.env
-
-# After CrowdSec bans the scanner IP — connection times out (iptables DROP)
-curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 https://your.domain/
+helm lint charts/crowdsec-firewall-bouncer/
 ```
 
-## Development
+---
+
+## Русская версия
+
+# crowdsec-firewall-bouncer
+
+Блокирует вредоносные IP (`.env` сканеры, брутфорс-боты и т.д.) на **уровне ноды** через iptables, до того как они достигнут nginx.
+
+```text
+                                    ┌──────────────────┐
+                                    │   Internet       │
+                                    │  (атакующий IP)  │
+                                    └────────┬─────────┘
+                                             │
+                                             ▼
+                              ┌──────────────────────────┐
+                              │  ingress-nginx            │
+                              │  (DaemonSet, hostNetwork) │
+                              └────────────┬─────────────┘
+                                           │
+                                   ┌───────▼────────┐
+                                   │  backend Pod   │
+                                   │  (HTTP 200/404)│
+                                   └────────────────┘
+                                             ▲
+                                             │ атакующий обходит
+                                             │ nginx → идёт на IP ноды
+                                             │
+        ┌─────────────────────┐    ┌─────────┴──────────┐    ┌──────────────────┐
+        │  CrowdSec Agent     │    │  CrowdSec LAPI     │    │ Firewall Bouncer │
+        │  (DaemonSet)        │───▶│  (Service)         │───▶│ (DaemonSet,      │
+        │  читает логи nginx  │    │  алерты→решения    │    │  privileged)     │
+        └─────────────────────┘    └────────────────────┘    └────────┬─────────┘
+                                                                      │
+                                                                      ▼
+                                                              ┌──────────────────┐
+                                                              │  iptables DROP   │
+                                                              │  INPUT chain     │
+                                                              │  (уровень ядра)  │
+                                                              └──────────────────┘
+```
+
+Требует: **CrowdSec LAPI** + **ingress-nginx с `hostNetwork`** + **Kubernetes Secret** с API-ключом bouncer'а.
+
+---
+
+## Подключение к своему GitOps
+
+### 1. Добавить source repo в ArgoCD Project
+
+В `Project` (например, `cluster-infra`) добавить `security-charts` в `sourceRepos`:
+
+```yaml
+spec:
+  sourceRepos:
+    - https://github.com/vitalykhe/security-charts.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: crowdsec
+```
+
+### 2. Создать ArgoCD Application
+
+**Из Git-репозитория** (рекомендуется):
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crowdsec-firewall-bouncer
+  namespace: argocd
+spec:
+  project: cluster-infra
+  source:
+    repoURL: https://github.com/vitalykhe/security-charts.git
+    targetRevision: main
+    path: charts/crowdsec-firewall-bouncer
+    helm:
+      values: |
+        existingSecret:
+          name: crowdsec-firewall-bouncer-key
+          key: api-key
+        config:
+          apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crowdsec
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+**Из OCI-регистра** (GHCR):
+
+```yaml
+source:
+  repoURL: oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer
+  targetRevision: 0.1.0
+```
+
+### 3. Добавить `KUBE_CONFIG_B64` в Secrets GitHub-репозитория
+
+В **своём GitOps-репозитории** создать GitHub Actions Secret:
+
+```bash
+base64 < ~/.kube/config | tr -d '\n'
+```
+
+| Secret | Описание |
+|---|---|
+| `KUBE_CONFIG_B64` | base64-encoded kubeconfig с доступом к кластеру и namespace `crowdsec` |
+
+### 4. Зарегистрировать bouncer и создать Secret с API-ключом
+
+**Вариант A — GitHub Actions (рекомендуется).**  
+Workflow лежит в **твоём GitOps-репозитории** (`.github/workflows/crowdsec-bootstrap.yml`):
+
+```yaml
+name: crowdsec-bootstrap
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    env:
+      KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
+    steps:
+      - uses: azure/setup-kubectl@v4
+
+      - name: Write kubeconfig
+        run: |
+          install -m 700 -d "$HOME/.kube"
+          printf '%s' "$KUBE_CONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Wait for LAPI
+        run: |
+          kubectl -n crowdsec wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=crowdsec-lapi --timeout=120s
+
+      - name: Register or rotate bouncer key
+        id: bouncer
+        run: |
+          LAPI_POD=$(kubectl -n crowdsec get pod \
+            -l app.kubernetes.io/name=crowdsec-lapi -o jsonpath='{.items[0].metadata.name}')
+          kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers delete firewall-bouncer 2>/dev/null || true
+          API_KEY=$(kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add firewall-bouncer -o raw)
+          echo "::add-mask::$API_KEY"
+          echo "api-key=$API_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Create Kubernetes Secret
+        run: |
+          kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
+            --from-literal=api-key="${{ steps.bouncer.outputs.api-key }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Restart bouncer DaemonSet
+        run: |
+          kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer 2>/dev/null || true
+```
+
+Запустить: **GitHub → Actions → crowdsec-bootstrap → Run workflow**
+
+**Вариант B — Вручную (one-time):**
+
+```bash
+kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- \
+  cscli bouncers add firewall-bouncer
+# скопировать ключ
+
+kubectl -n crowdsec create secret generic crowdsec-firewall-bouncer-key \
+  --from-literal=api-key='<KEY>'
+
+kubectl -n crowdsec rollout restart daemonset crowdsec-firewall-bouncer
+```
+
+### Развёртывание без ArgoCD (plain Helm)
+
+```bash
+helm repo add security-charts oci://ghcr.io/vitalykhe/security-charts
+helm upgrade --install crowdsec-firewall-bouncer \
+  security-charts/crowdsec-firewall-bouncer \
+  --namespace crowdsec --create-namespace \
+  --set existingSecret.name=crowdsec-firewall-bouncer-key \
+  --set existingSecret.key=api-key \
+  --set config.apiUrl=http://crowdsec-crowdsec-lapi.crowdsec:8080
+```
+
+Или с локальным values-файлом:
+
+```bash
+helm upgrade --install crowdsec-firewall-bouncer \
+  oci://ghcr.io/vitalykhe/security-charts/crowdsec-firewall-bouncer \
+  --namespace crowdsec --create-namespace \
+  -f my-values.yaml
+```
+
+### Verifying
+
+```bash
+kubectl -n crowdsec get pods
+kubectl -n crowdsec exec deployment/crowdsec-crowdsec-lapi -- cscli bouncers list
+kubectl -n crowdsec logs daemonset/crowdsec-firewall-bouncer --tail 20
+sudo iptables -L crowdsec-blacklists -n      # на ноде
+```
+
+### Development
 
 ```bash
 helm lint charts/crowdsec-firewall-bouncer/
