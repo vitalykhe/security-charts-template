@@ -58,11 +58,11 @@ spec:
               apt install -y -qq crowdsec-firewall-bouncer-iptables
               # Copy binary and iptables to shared volume
               cp /usr/bin/crowdsec-firewall-bouncer /bouncer/
-              # Ensure iptables is available
-              which iptables || apt install -y -qq iptables
+              # Ensure iptables and ipset are available
+              apt install -y -qq iptables ipset
               cp "$(which iptables)" /bouncer/iptables
-              cp "$(which ip6tables)" /bouncer/ip6tables 2>/dev/null || true
-              cp "$(which ipset)" /bouncer/ipset 2>/dev/null || true
+              cp "$(which ip6tables)" /bouncer/ip6tables
+              cp "$(which ipset)" /bouncer/ipset
               # Copy shared libraries
               mkdir -p /bouncer/lib
               ldd /usr/bin/crowdsec-firewall-bouncer 2>/dev/null | \
@@ -97,7 +97,8 @@ spec:
               modprobe ip6table_filter 2>/dev/null || true
               modprobe ip_set 2>/dev/null || true
               modprobe xt_set 2>/dev/null || true
-              # Run the bouncer
+              # Add /bouncer to PATH so bouncer can find ipset
+              export PATH=/bouncer:$PATH
               export LD_LIBRARY_PATH=/bouncer/lib:$LD_LIBRARY_PATH
               exec /bouncer/crowdsec-firewall-bouncer -c /config/crowdsec-firewall-bouncer.yaml
           resources:
