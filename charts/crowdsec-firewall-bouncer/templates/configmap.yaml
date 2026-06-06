@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "crowdsec-firewall-bouncer.name" . }}-config
+  labels:
+    {{- include "crowdsec-firewall-bouncer.labels" . | nindent 4 }}
+data:
+  crowdsec-firewall-bouncer.yaml: |
+    mode: {{ .Values.config.backend }}
+    update_frequency: {{ .Values.config.updateFrequency }}
+    log_mode: file
+    log_dir: /var/log/
+    log_level: info
+    log_compression: true
+    log_max_size: 100
+    log_max_backups: 3
+    log_max_age: 30
+    api_url: {{ .Values.config.apiUrl }}
+    api_key: ${API_KEY}
+    insecure_skip_verify: false
+    disable_ipv6: false
+    deny_action: {{ .Values.config.denyAction }}
+    deny_log: {{ .Values.config.denyLog }}
+    supported_decisions_types:
+      - ban
+    blacklists_ipv4: crowdsec-blacklists
+    blacklists_ipv6: crowdsec6-blacklists
+    ipset_type: nethash
+    iptables_chains:
+      - INPUT
+    iptables_add_rule_comments: true
+    nftables:
+      ipv4:
+        enabled: true
+        set-only: false

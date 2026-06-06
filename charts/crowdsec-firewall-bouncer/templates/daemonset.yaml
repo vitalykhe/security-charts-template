@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "crowdsec-firewall-bouncer.name" . }}
+  labels:
+    {{- include "crowdsec-firewall-bouncer.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "crowdsec-firewall-bouncer.name" . }}
+  updateStrategy:
+    type: {{ .Values.daemonset.updateStrategy }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "crowdsec-firewall-bouncer.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      hostNetwork: true
+      serviceAccountName: {{ include "crowdsec-firewall-bouncer.name" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: install
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.existingSecret.name }}
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.key }}
+                  {{- else }}
+                  name: {{ include "crowdsec-firewall-bouncer.name" . }}-key
+                  key: api-key
+                  {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              apt update -qq
+              apt install -y -qq curl sudo
+              curl -s https://install.crowdsec.net | sh
+              apt install -y -qq crowdsec-firewall-bouncer-iptables
+              # Copy binary and iptables to shared volume
+              cp /usr/bin/crowdsec-firewall-bouncer /bouncer/
+              # Ensure iptables is available
+              which iptables || apt install -y -qq iptables
+              cp "$(which iptables)" /bouncer/iptables
+              cp "$(which ip6tables)" /bouncer/ip6tables 2>/dev/null || true
+              cp "$(which ipset)" /bouncer/ipset 2>/dev/null || true
+              # Copy shared libraries
+              mkdir -p /bouncer/lib
+              ldd /usr/bin/crowdsec-firewall-bouncer 2>/dev/null | \
+                awk '/=> \// {print $3}' | xargs -I{} cp {} /bouncer/lib/ 2>/dev/null || true
+          volumeMounts:
+            - name: bouncer-bin
+              mountPath: /bouncer
+      containers:
+        - name: bouncer
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.existingSecret.name }}
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.key }}
+                  {{- else }}
+                  name: {{ include "crowdsec-firewall-bouncer.name" . }}-key
+                  key: api-key
+                  {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # Ensure iptables modules are loaded
+              modprobe iptable_filter 2>/dev/null || true
+              modprobe ip6table_filter 2>/dev/null || true
+              modprobe ip_set 2>/dev/null || true
+              modprobe xt_set 2>/dev/null || true
+              # Run the bouncer
+              export LD_LIBRARY_PATH=/bouncer/lib:$LD_LIBRARY_PATH
+              exec /bouncer/crowdsec-firewall-bouncer -c /config/crowdsec-firewall-bouncer.yaml
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: bouncer-bin
+              mountPath: /bouncer
+              readOnly: true
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: xtables-lock
+              mountPath: /run
+      volumes:
+        - name: bouncer-bin
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "crowdsec-firewall-bouncer.name" . }}-config
+        - name: xtables-lock
+          emptyDir: {}

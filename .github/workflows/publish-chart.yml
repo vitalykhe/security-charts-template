@@ -1,0 +1,66 @@
+name: publish-chart
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/**/Chart.yaml"
+      - "charts/**/values.yaml"
+      - "charts/**/templates/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: latest
+      - name: Lint charts
+        run: |
+          for chart in charts/*/; do
+            echo "Linting $chart..."
+            helm lint "$chart"
+          done
+
+  publish:
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      - name: Login to GHCR
+        run: |
+          helm registry login ghcr.io \
+            --username "${{ github.actor }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Package and push charts
+        run: |
+          for chart_dir in charts/*/; do
+            chart_name=$(basename "$chart_dir")
+            echo "Processing $chart_name..."
+            helm package "$chart_dir" --destination /tmp/charts
+            chart_package=$(ls /tmp/charts/*.tgz | head -1)
+            helm push "$chart_package" oci://ghcr.io/${{ github.repository }}
+            echo "✓ Published $chart_name"
+          done
+
+      - name: Summary
+        run: |
+          echo "## Published Charts" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for chart_dir in charts/*/; do
+            chart_name=$(basename "$chart_dir")
+            version=$(grep '^version:' "$chart_dir/Chart.yaml" | awk '{print $2}')
+            echo "- \`$chart_name\` v$version" >> "$GITHUB_STEP_SUMMARY"
+            echo "  → \`oci://ghcr.io/${{ github.repository }}/$chart_name\`" >> "$GITHUB_STEP_SUMMARY"
+          done

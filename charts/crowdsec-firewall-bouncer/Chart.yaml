@@ -1,0 +1,23 @@
+apiVersion: v2
+name: crowdsec-firewall-bouncer
+description: |
+  CrowdSec Firewall Bouncer — bans malicious IPs via iptables/nftables
+  at the node level. Designed for Kubernetes clusters with ingress-nginx
+  (hostNetwork mode).
+type: application
+version: 0.1.0
+appVersion: v0.0.34
+home: https://github.com/vitalykhe/security-charts
+sources:
+  - https://github.com/vitalykhe/security-charts
+  - https://github.com/crowdsecurity/cs-firewall-bouncer
+keywords:
+  - crowdsec
+  - firewall
+  - bouncer
+  - iptables
+  - nftables
+  - security
+maintainers:
+  - name: Vitaly Khe
+    email: vitalykhe@users.noreply.github.com

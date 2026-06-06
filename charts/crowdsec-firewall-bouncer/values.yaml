@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# CrowdSec Firewall Bouncer — values
+# ---------------------------------------------------------------------------
+
+image:
+  repository: debian
+  tag: "12-slim"
+  pullPolicy: IfNotPresent
+
+# -- LAPI connection
+# The bouncer needs an API key registered with the LAPI.
+# Bootstrap: run .github/workflows/crowdsec-bootstrap.yml (GitHub Actions)
+# which calls `cscli bouncers add firewall-bouncer` and writes the key
+# into a Kubernetes Secret referenced by existingSecret below.
+config:
+  # LAPI URL (internal ClusterIP service)
+  apiUrl: "http://crowdsec-crowdsec-lapi.crowdsec:8080"
+
+  # Backend: iptables or nftables
+  backend: iptables
+
+  # Update frequency for pulling decisions from LAPI
+  updateFrequency: 10s
+
+  # Deny action: DROP or REJECT
+  denyAction: DROP
+
+  # Log denied requests
+  denyLog: true
+
+# -- The bouncer API key.
+# ⚠️  Never set a real key here. This is only for local dev/testing.
+#     In production the key is managed by the GitHub Actions workflow
+#     and stored in a Kubernetes Secret (see existingSecret below).
+bouncerKey: "change-me"
+
+# -- Reference an existing Secret containing the API key.
+# The Secret must have key "api-key" in the same namespace.
+# Created automatically by .github/workflows/crowdsec-bootstrap.yml.
+# If set, overrides bouncerKey.
+existingSecret:
+  name: ""
+  key: "api-key"
+
+# -- DaemonSet settings
+daemonset:
+  updateStrategy: RollingUpdate
+
+# -- Node selector, tolerations, affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- Resource requests/limits
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
