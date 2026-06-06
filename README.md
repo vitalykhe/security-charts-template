@@ -146,13 +146,13 @@ jobs:
       - name: Wait for LAPI
         run: |
           kubectl -n crowdsec wait --for=condition=ready pod \
-            -l app.kubernetes.io/name=crowdsec-lapi --timeout=120s
+            -l k8s-app=crowdsec,type=lapi --timeout=120s
 
       - name: Register or rotate bouncer key
         id: bouncer
         run: |
           LAPI_POD=$(kubectl -n crowdsec get pod \
-            -l app.kubernetes.io/name=crowdsec-lapi -o jsonpath='{.items[0].metadata.name}')
+            -l k8s-app=crowdsec,type=lapi -o jsonpath='{.items[0].metadata.name}')
           kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers delete firewall-bouncer 2>/dev/null || true
           API_KEY=$(kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add firewall-bouncer -o raw)
           echo "::add-mask::$API_KEY"
@@ -374,13 +374,13 @@ jobs:
       - name: Wait for LAPI
         run: |
           kubectl -n crowdsec wait --for=condition=ready pod \
-            -l app.kubernetes.io/name=crowdsec-lapi --timeout=120s
+            -l k8s-app=crowdsec,type=lapi --timeout=120s
 
       - name: Register or rotate bouncer key
         id: bouncer
         run: |
           LAPI_POD=$(kubectl -n crowdsec get pod \
-            -l app.kubernetes.io/name=crowdsec-lapi -o jsonpath='{.items[0].metadata.name}')
+            -l k8s-app=crowdsec,type=lapi -o jsonpath='{.items[0].metadata.name}')
           kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers delete firewall-bouncer 2>/dev/null || true
           API_KEY=$(kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add firewall-bouncer -o raw)
           echo "::add-mask::$API_KEY"
